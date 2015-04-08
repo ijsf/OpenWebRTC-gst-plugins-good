@@ -68,6 +68,7 @@ struct _GstVP8Dec
   gboolean decoder_inited;
 
   /* properties */
+  gint64 deadline;
   gboolean post_processing;
   enum vp8_postproc_level post_processing_flags;
   gint deblocking_level;

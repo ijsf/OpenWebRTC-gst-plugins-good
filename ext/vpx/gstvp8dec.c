@@ -55,6 +55,7 @@ GST_DEBUG_CATEGORY_STATIC (gst_vp8dec_debug);
 #define GST_CAT_DEFAULT gst_vp8dec_debug
 
 #define DEFAULT_POST_PROCESSING FALSE
+#define DEFAULT_DEADLINE 0
 #define DEFAULT_POST_PROCESSING_FLAGS (VP8_DEBLOCK | VP8_DEMACROBLOCK | VP8_MFQE)
 #define DEFAULT_DEBLOCKING_LEVEL 4
 #define DEFAULT_NOISE_LEVEL 0
@@ -67,7 +68,8 @@ enum
   PROP_POST_PROCESSING_FLAGS,
   PROP_DEBLOCKING_LEVEL,
   PROP_NOISE_LEVEL,
-  PROP_THREADS
+  PROP_THREADS,
+  PROP_DEADLINE
 };
 
 #define C_FLAGS(v) ((guint) v)
@@ -143,6 +145,12 @@ gst_vp8_dec_class_init (GstVP8DecClass * klass)
   gobject_class->set_property = gst_vp8_dec_set_property;
   gobject_class->get_property = gst_vp8_dec_get_property;
 
+  g_object_class_install_property (gobject_class, PROP_DEADLINE,
+      g_param_spec_int64 ("deadline", "Deadline",
+          "Deadline per frame (usec, 0=automatic)",
+          0, G_MAXINT64, DEFAULT_DEADLINE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
   g_object_class_install_property (gobject_class, PROP_POST_PROCESSING,
       g_param_spec_boolean ("post-processing", "Post Processing",
           "Enable post processing", DEFAULT_POST_PROCESSING,
@@ -201,6 +209,7 @@ gst_vp8_dec_init (GstVP8Dec * gst_vp8_dec)
 
   GST_DEBUG_OBJECT (gst_vp8_dec, "gst_vp8_dec_init");
   gst_video_decoder_set_packetized (decoder, TRUE);
+  gst_vp8_dec->deadline = DEFAULT_DEADLINE;
   gst_vp8_dec->post_processing = DEFAULT_POST_PROCESSING;
   gst_vp8_dec->post_processing_flags = DEFAULT_POST_PROCESSING_FLAGS;
   gst_vp8_dec->deblocking_level = DEFAULT_DEBLOCKING_LEVEL;
@@ -220,6 +229,9 @@ gst_vp8_dec_set_property (GObject * object, guint prop_id,
 
   GST_DEBUG_OBJECT (object, "gst_vp8_dec_set_property");
   switch (prop_id) {
+    case PROP_DEADLINE:
+      dec->deadline = g_value_get_int64 (value);
+      break;
     case PROP_POST_PROCESSING:
       dec->post_processing = g_value_get_boolean (value);
       break;
@@ -251,6 +263,9 @@ gst_vp8_dec_get_property (GObject * object, guint prop_id, GValue * value,
   dec = GST_VP8_DEC (object);
 
   switch (prop_id) {
+    case PROP_DEADLINE:
+      g_value_set_int64 (value, dec->deadline);
+      break;
     case PROP_POST_PROCESSING:
       g_value_set_boolean (value, dec->post_processing);
       break;
@@ -514,13 +529,19 @@ gst_vp8_dec_handle_frame (GstVideoDecoder * decoder, GstVideoCodecFrame * frame)
       return ret;
   }
 
-  deadline = gst_video_decoder_get_max_decode_time (decoder, frame);
-  if (deadline < 0) {
-    decoder_deadline = 1;
-  } else if (deadline == G_MAXINT64) {
-    decoder_deadline = 0;
+  if (dec->deadline) {
+    /* Deadline is overwritten by property */
+    decoder_deadline = dec->deadline;
   } else {
-    decoder_deadline = MAX (1, deadline / GST_MSECOND);
+    /* Automatically determine deadline */
+    deadline = gst_video_decoder_get_max_decode_time (decoder, frame);
+    if (deadline < 0) {
+      decoder_deadline = 1;
+    } else if (deadline == G_MAXINT64) {
+      decoder_deadline = 0;
+    } else {
+      decoder_deadline = MAX (1, deadline / GST_MSECOND);
+    }
   }
 
   if (!gst_buffer_map (frame->input_buffer, &minfo, GST_MAP_READ)) {
